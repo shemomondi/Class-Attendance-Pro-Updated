@@ -1,0 +1,6 @@
+{
+  "name": "Class Attendance Pro",
+  "description": "Offline-first class attendance system with student-specific OTP generation and 20-minute expiration window.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
