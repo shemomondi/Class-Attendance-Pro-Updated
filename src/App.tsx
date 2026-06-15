@@ -5407,7 +5407,7 @@ export default function App() {
       </main>
 
       {/* Footer Info */}
-      <footer className="fixed bottom-0 left-0 right-0 bg-white/70 dark:bg-zinc-940/70 backdrop-blur-md border-t border-black/5 dark:border-white/10 py-1 px-3 flex flex-wrap justify-center items-center gap-x-3 gap-y-1 sm:gap-x-4 sm:gap-y-1.5 z-50 select-none">
+      <footer className="fixed bottom-0 left-0 right-0 bg-white/90 dark:bg-zinc-900/95 backdrop-blur-md border-t border-black/5 dark:border-white/10 py-2 px-3 flex flex-wrap justify-center items-center gap-x-3 gap-y-1 sm:gap-x-4 sm:gap-y-1.5 z-50 select-none">
         <div 
           onClick={() => alert('HYBRID OFFLINE COEXISTENCE:\n\nThis application is engineered for student offline resilience. If students are offline or have limited connection, the local storage caches state automatically. Lecturers, Reps, and Superadmins can update courses, lectures, and active rosters online, and these changes are cached of student-side records and seamlessly synchronise, rendering continuous coordination reliable in both connected and disconnected environments.')}
           className="flex items-center gap-1.5 px-2 py-0.5 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-[8px] font-black uppercase tracking-widest rounded-full cursor-pointer hover:bg-emerald-100 dark:hover:bg-emerald-900/30 transition-all select-none"
@@ -5419,7 +5419,7 @@ export default function App() {
         
         <div className="hidden sm:block h-3.5 w-px bg-black/10 dark:bg-white/10" />
         
-        <div className="flex items-center gap-1.5 text-[9px] sm:text-[10px] font-bold uppercase tracking-widest text-neutral-400 dark:text-zinc-500">
+        <div className="flex items-center gap-1.5 text-[9px] sm:text-[10px] font-bold uppercase tracking-widest text-neutral-500 dark:text-zinc-400">
           <Info className="w-2.5 h-2.5" /> 
           {isLecturerPortal ? 'LECTURER MODE' : isRepPortal ? 'REPRESENTATIVE MODE' : isDevPortal ? 'DEVELOPER CONTROL' : isSuperAdminPortal ? 'SUPERADMIN OVERSIGHT' : 'STUDENT MODE'}
         </div>
