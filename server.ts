@@ -192,6 +192,23 @@ runColumnMigration('departments', [
     db.prepare("INSERT OR IGNORE INTO superadmins (school_id, username, password) VALUES (1, 'ku_admin', 'super123')").run();
   }
 
+  // Seed default students if empty to match emulator
+  const checkStudents = db.prepare("SELECT count(*) as count FROM students").get() as { count: number };
+  if (checkStudents.count === 0) {
+    db.prepare("INSERT OR IGNORE INTO students (id, name, admission_number, course_id, intake) VALUES (1, 'John Doe', 'CIT/001/2026', 1, 'May 2026')").run();
+    db.prepare("INSERT OR IGNORE INTO students (id, name, admission_number, course_id, intake) VALUES (2, 'Jane Smith', 'CIT/002/2026', 1, 'May 2026')").run();
+    db.prepare("INSERT OR IGNORE INTO students (id, name, admission_number, course_id, intake) VALUES (3, 'Arthur Pendragon', 'CIT/003/2026', 1, 'May 2026')").run();
+    db.prepare("INSERT OR IGNORE INTO students (id, name, admission_number, course_id, intake) VALUES (4, 'Grace Hopper', 'CIT/004/2026', 1, 'May 2026')").run();
+    db.prepare("INSERT OR IGNORE INTO students (id, name, admission_number, course_id, intake) VALUES (5, 'Albert Einstein', 'CIT/005/2026', 1, 'May 2026')").run();
+    db.prepare("INSERT OR IGNORE INTO students (id, name, admission_number, course_id, intake) VALUES (6, 'Marie Curie', 'CIT/006/2026', 1, 'May 2026')").run();
+  }
+
+  // Seed default unit if empty to match emulator
+  const checkUnits = db.prepare("SELECT count(*) as count FROM units").get() as { count: number };
+  if (checkUnits.count === 0) {
+    db.prepare("INSERT OR IGNORE INTO units (id, name, lecturer, department_id, intake) VALUES (1, 'FIT 201 - Software Engineering', 'Dr. Kamau', 1, 'May 2026')").run();
+  }
+
   // Populate default intakes
   const checkIntakes = db.prepare("SELECT count(*) as count FROM intakes").get() as { count: number };
   if (checkIntakes.count === 0) {
@@ -1553,8 +1570,8 @@ Return the structured relationship cleanly in the requested JSON structure. Keep
       const lecturer_otp = Math.floor(100000 + Math.random() * 900000).toString();
       
       const lessonInfo = db.prepare(`
-        INSERT INTO lessons (unit_id, date, venue, duration, start_time, end_time, scheduled_start, scheduled_end, lecturer_otp) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO lessons (unit_id, date, venue, duration, start_time, end_time, scheduled_start, scheduled_end, lecturer_otp, lecturer_present, otp_enabled) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)
       `).run(unitIdNum, start_time, venue, durationNum, start_time, end_time, scheduled_start, scheduled_end, lecturer_otp);
       
       const lessonId = Number(lessonInfo.lastInsertRowid);
@@ -1605,8 +1622,8 @@ Return the structured relationship cleanly in the requested JSON structure. Keep
     const start_time = now.toISOString();
     const end_time = new Date(now.getTime() + activeLesson.duration * 60000).toISOString();
 
-    // Update lesson times
-    db.prepare('UPDATE lessons SET start_time = ?, end_time = ?, otp_enabled = 0 WHERE id = ?')
+    // Update lesson times and reset statuses
+    db.prepare('UPDATE lessons SET start_time = ?, end_time = ?, otp_enabled = 0, lecturer_present = 0 WHERE id = ?')
       .run(start_time, end_time, activeLesson.id);
 
     // Reset attendance for this lesson
@@ -1674,7 +1691,7 @@ Return the structured relationship cleanly in the requested JSON structure. Keep
         WHERE a.lesson_id = ?
       `).all(lesson.id) as AttendanceRow[];
 
-      res.json({ ...lesson, attendance, otp_duration_mins });
+      res.json({ ...lesson, attendance, otp_duration_mins, server_time_now: new Date().toISOString() });
     } catch (error) {
       console.error('Error fetching active lesson:', error);
       res.status(500).json({ error: 'Internal server error' });
