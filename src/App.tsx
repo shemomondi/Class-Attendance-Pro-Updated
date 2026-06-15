@@ -102,802 +102,7 @@ const safeSessionStorage = {
 const localStorage = safeLocalStorage;
 const sessionStorage = safeSessionStorage;
 
-// --- Hybrid Client-Side Database & API Emulator for Vercel/Offline Resilience ---
-const getLocalCollection = (name: string, defaultVal: any) => {
-  const cached = localStorage.getItem('emulated_db_' + name);
-  if (cached) {
-    try { return JSON.parse(cached); } catch(e) {}
-  }
-  localStorage.setItem('emulated_db_' + name, JSON.stringify(defaultVal));
-  return defaultVal;
-};
 
-const setLocalCollection = (name: string, val: any) => {
-  localStorage.setItem('emulated_db_' + name, JSON.stringify(val));
-};
-
-const initEmulatedDb = () => {
-  getLocalCollection('schools', [
-    { id: 1, name: "Kenyatta University (KU)", status: "active", paid_status: "paid", billing_amount: 1500, last_billing_date: "2026-06-01" }
-  ]);
-  getLocalCollection('settings', {
-    developer_password: "shem123",
-    rep_password: "admin123",
-    lecturer_password: "lecturer123",
-    representative_name: "Class Representative",
-    otp_duration_mins: "20",
-    late_threshold_mins: "5"
-  });
-  getLocalCollection('departments', [
-    { id: 1, school_id: 1, name: "Computing and Information Technology" }
-  ]);
-  getLocalCollection('courses', [
-    { id: 1, department_id: 1, name: "BSc. Computer Science" }
-  ]);
-  getLocalCollection('intakes', [
-    { id: 1, name: "May 2026" }
-  ]);
-  getLocalCollection('units', [
-    { id: 1, name: "FIT 201 - Software Engineering", lecturer: "Dr. Kamau", school_id: 1, department_id: 1, intake: "May 2026" }
-  ]);
-  getLocalCollection('students', [
-    { id: 1, name: "John Doe", admission_number: "CIT/001/2026", school_id: 1, course_id: 1, intake: "May 2026" }
-  ]);
-  getLocalCollection('superadmins', [
-    { school_id: 1, username: "ku_admin", password: "super123" }
-  ]);
-  getLocalCollection('lessons', []);
-  getLocalCollection('attendance', []);
-  getLocalCollection('announcements', []);
-  getLocalCollection('payment_submissions', []);
-  getLocalCollection('student_warnings', []);
-};
-
-const originalFetch = window.fetch;
-let emulatorEnabled = false;
-
-if (
-  window.location.hostname.includes('vercel.app') || 
-  window.location.hostname.includes('vercel.dev') ||
-  localStorage.getItem('emulator_force_enabled') === 'true'
-) {
-  emulatorEnabled = true;
-  console.log('[System] Vercel or Offline state detected. Activating Client-Side Local Database Emulator.');
-  initEmulatedDb();
-}
-
-// Quietly check if dynamic service is active. Swap to emulator if it fails.
-const probeBackend = async () => {
-  if (emulatorEnabled) return;
-  try {
-    const res = await originalFetch('/api/license/status').catch(() => null);
-    if (!res || !res.ok) {
-      emulatorEnabled = true;
-      localStorage.setItem('emulator_force_enabled', 'true');
-      console.log('[System] Backend probe offline. Activating emulated local storage runtime.');
-      initEmulatedDb();
-    }
-  } catch (err) {
-    emulatorEnabled = true;
-    localStorage.setItem('emulator_force_enabled', 'true');
-    console.log('[System] Failover activated due to connection rejection.');
-    initEmulatedDb();
-  }
-};
-probeBackend();
-
-const makeEmulatorResponse = (body: any, status = 200) => {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'Content-Type': 'application/json' }
-  });
-};
-
-const handleEmulatedRequest = async (url: string, options?: RequestInit): Promise<Response> => {
-  initEmulatedDb();
-  
-  const parsedUrl = new URL(url, window.location.origin);
-  const path = parsedUrl.pathname;
-  const method = (options?.method || 'GET').toUpperCase();
-  
-  let body: any = {};
-  if (options?.body) {
-    try {
-      if (typeof options.body === 'string') {
-        body = JSON.parse(options.body);
-      }
-    } catch(e) {}
-  }
-  
-  const getCol = (name: string) => JSON.parse(localStorage.getItem('emulated_db_' + name) || '[]');
-  const saveCol = (name: string, data: any) => localStorage.setItem('emulated_db_' + name, JSON.stringify(data));
-  const getSettings = () => JSON.parse(localStorage.getItem('emulated_db_settings') || '{}');
-  const saveSettings = (data: any) => localStorage.setItem('emulated_db_settings', JSON.stringify(data));
-
-  // Endpoints Implementation
-  if (path === '/api/developer/login' && method === 'POST') {
-    const settings = getSettings();
-    if (settings.developer_password === body.password) {
-      return makeEmulatorResponse({ success: true, success_login: true });
-    } else {
-      return makeEmulatorResponse({ error: 'Invalid developer credentials' }, 401);
-    }
-  }
-  
-  if (path === '/api/auth/developer' && method === 'POST') {
-    const settings = getSettings();
-    if (settings.developer_password === body.password) {
-      return makeEmulatorResponse({ success: true });
-    } else {
-      return makeEmulatorResponse({ error: 'Invalid developer credentials' }, 401);
-    }
-  }
-  
-  if (path === '/api/developer/settings/password' && method === 'POST') {
-    const settings = getSettings();
-    settings.developer_password = body.password;
-    saveSettings(settings);
-    return makeEmulatorResponse({ success: true });
-  }
-
-  if (path === '/api/developer/schools' && method === 'GET') {
-    return makeEmulatorResponse(getCol('schools'));
-  }
-  
-  if (path === '/api/developer/schools' && method === 'POST') {
-    const schools = getCol('schools');
-    const newId = schools.length > 0 ? Math.max(...schools.map((s: any) => s.id)) + 1 : 1;
-    const newSchool = {
-      id: newId,
-      name: body.name,
-      status: 'active',
-      paid_status: 'paid',
-      billing_amount: body.billing_amount || 1500,
-      last_billing_date: new Date().toISOString().split('T')[0]
-    };
-    schools.push(newSchool);
-    saveCol('schools', schools);
-    
-    const superadmins = getCol('superadmins');
-    const slug = body.name.toLowerCase().replace(/[^a-z0-9]/g, '_');
-    superadmins.push({
-      school_id: newId,
-      username: `${slug}_admin`,
-      password: 'super123'
-    });
-    saveCol('superadmins', superadmins);
-    return makeEmulatorResponse({ success: true });
-  }
-  
-  if (path === '/api/developer/schools/status' && method === 'POST') {
-    const schools = getCol('schools');
-    const school = schools.find((s: any) => s.id === Number(body.id));
-    if (school) school.status = body.status;
-    saveCol('schools', schools);
-    return makeEmulatorResponse({ success: true });
-  }
-  
-  if (path === '/api/developer/schools/billing' && method === 'POST') {
-    const schools = getCol('schools');
-    const school = schools.find((s: any) => s.id === Number(body.id));
-    if (school) school.billing_amount = Number(body.amount);
-    saveCol('schools', schools);
-    return makeEmulatorResponse({ success: true });
-  }
-  
-  if (path === '/api/developer/schools/bill' && method === 'POST') {
-    const schools = getCol('schools');
-    const school = schools.find((s: any) => s.id === Number(body.id));
-    if (school) {
-      school.last_billing_date = body.date || new Date().toISOString().split('T')[0];
-      school.paid_status = 'unpaid';
-    }
-    saveCol('schools', schools);
-    return makeEmulatorResponse({ success: true });
-  }
-  
-  if (path.startsWith('/api/developer/schools/') && method === 'DELETE') {
-    const id = Number(path.split('/').pop());
-    let schools = getCol('schools');
-    schools = schools.filter((s: any) => s.id !== id);
-    saveCol('schools', schools);
-    return makeEmulatorResponse({ success: true });
-  }
-  
-  if (path === '/api/developer/schools/superadmin' && method === 'POST') {
-    const superadmins = getCol('superadmins');
-    const existingIdx = superadmins.findIndex((sa: any) => sa.school_id === Number(body.school_id));
-    const record = { school_id: Number(body.school_id), username: body.username, password: body.password };
-    if (existingIdx >= 0) {
-      superadmins[existingIdx] = record;
-    } else {
-      superadmins.push(record);
-    }
-    saveCol('superadmins', superadmins);
-    return makeEmulatorResponse({ success: true });
-  }
-
-  if (path === '/api/developer/payment-submissions' && method === 'GET') {
-    return makeEmulatorResponse(getCol('payment_submissions'));
-  }
-  
-  if (path === '/api/developer/payment-submissions/approve' && method === 'POST') {
-    const submissions = getCol('payment_submissions');
-    const sub = submissions.find((s: any) => s.id === Number(body.id));
-    if (sub) sub.status = 'approved';
-    saveCol('payment_submissions', submissions);
-    
-    const schools = getCol('schools');
-    const school = schools.find((s: any) => s.id === Number(body.school_id));
-    if (school) {
-      school.status = 'active';
-      school.paid_status = 'paid';
-      school.last_billing_date = new Date().toISOString().split('T')[0];
-    }
-    saveCol('schools', schools);
-    return makeEmulatorResponse({ success: true });
-  }
-  
-  if (path === '/api/developer/payment-submissions/reject' && method === 'POST') {
-    const submissions = getCol('payment_submissions');
-    const sub = submissions.find((s: any) => s.id === Number(body.id));
-    if (sub) sub.status = 'rejected';
-    saveCol('payment_submissions', submissions);
-    
-    if (body.school_id) {
-      const schools = getCol('schools');
-      const school = schools.find((s: any) => s.id === Number(body.school_id));
-      if (school) school.paid_status = 'unpaid';
-      saveCol('schools', schools);
-    }
-    return makeEmulatorResponse({ success: true });
-  }
-
-  if (path === '/api/developer/reports' && method === 'GET') {
-    const schools = getCol('schools');
-    const list = schools.map((s: any) => {
-      return {
-        school_id: s.id,
-        school_name: s.name,
-        students_count: getCol('students').filter((st: any) => st.school_id === s.id).length,
-        lessons_count: getCol('lessons').filter((l: any) => l.school_id === s.id).length,
-        attendance_percentage: 85,
-        warnings_count: 0,
-        status: s.status,
-        paid_status: s.paid_status
-      };
-    });
-    return makeEmulatorResponse(list);
-  }
-
-  if (path === '/api/superadmin/login' && method === 'POST') {
-    const superadmins = getCol('superadmins');
-    const found = superadmins.find((sa: any) => sa.school_id === Number(body.school_id) && sa.username === body.username && sa.password === body.password);
-    if (found) {
-      return makeEmulatorResponse({ success: true });
-    } else {
-      return makeEmulatorResponse({ error: 'Invalid superadmin credentials' }, 401);
-    }
-  }
-  
-  if (path.startsWith('/api/superadmin/report/') && method === 'GET') {
-    const schoolId = Number(path.split('?')[0].split('/').pop());
-    const schools = getCol('schools');
-    const school = schools.find((s: any) => s.id === schoolId) || { name: 'Unknown', paid_status: 'paid', status: 'active', billing_amount: 1500, last_billing_date: '' };
-    const students = getCol('students').filter((s: any) => s.school_id === schoolId);
-    const units = getCol('units').filter((u: any) => u.school_id === schoolId);
-    const lessons = getCol('lessons').filter((l: any) => l.school_id === schoolId);
-    return makeEmulatorResponse({
-      school_name: school.name,
-      paid_status: school.paid_status,
-      status: school.status,
-      billing_amount: school.billing_amount || 1500,
-      last_billing_date: school.last_billing_date,
-      students_count: students.length,
-      units_count: units.length,
-      lessons_count: lessons.length,
-      attendance_rate: 85,
-      active_classes: lessons.filter((l: any) => !l.end_time).length
-    });
-  }
-  
-  if (path.startsWith('/api/superadmin/passwords/') && method === 'GET') {
-    const schoolId = Number(path.split('?')[0].split('/').pop());
-    const superadmins = getCol('superadmins');
-    const settings = getSettings();
-    const list = superadmins.filter((sa: any) => sa.school_id === schoolId).map((sa: any) => {
-      return { user_name: sa.username, role: 'Super Admin', password: sa.password };
-    });
-    list.push({ user_name: "Class Representative", role: "Representative", password: settings.rep_password || 'admin123' });
-    list.push({ user_name: "Course Lecturers (Standard)", role: "Lecturer", password: settings.lecturer_password || 'lecturer123' });
-    return makeEmulatorResponse(list);
-  }
-  
-  if (path === '/api/superadmin/passwords' && method === 'POST') {
-    const superadmins = getCol('superadmins');
-    const sa = superadmins.find((s: any) => s.school_id === Number(body.school_id));
-    if (sa) {
-      if (body.username) sa.username = body.username;
-      if (body.password) sa.password = body.password;
-      saveCol('superadmins', superadmins);
-    }
-    return makeEmulatorResponse({ success: true });
-  }
-
-  if (path.startsWith('/api/announcements/') && method === 'GET') {
-    const schoolId = Number(path.split('?')[0].split('/').pop());
-    const queryAudience = parsedUrl.searchParams.get('audience');
-    const allAnn = getCol('announcements');
-    const filtered = allAnn.filter((a: any) => {
-      const matchSchool = (a.school_id === schoolId);
-      if (!matchSchool) return false;
-      if (!queryAudience) return true;
-      if (queryAudience === 'all') return true;
-      return a.audience === queryAudience || a.audience === 'all';
-    });
-    return makeEmulatorResponse(filtered);
-  }
-  
-  if (path === '/api/announcements' && method === 'POST') {
-    const all = getCol('announcements');
-    const newId = all.length > 0 ? Math.max(...all.map((a: any) => a.id)) + 1 : 1;
-    const item = {
-      id: newId,
-      school_id: Number(body.school_id || 1),
-      title: body.title,
-      content: body.content,
-      audience: body.audience || 'all',
-      created_at: new Date().toISOString()
-    };
-    all.push(item);
-    saveCol('announcements', all);
-    return makeEmulatorResponse({ success: true });
-  }
-  
-  if (path.startsWith('/api/announcements/') && method === 'DELETE') {
-    const id = Number(path.split('/').pop());
-    let all = getCol('announcements');
-    all = all.filter((a: any) => a.id !== id);
-    saveCol('announcements', all);
-    return makeEmulatorResponse({ success: true });
-  }
-
-  if (path.startsWith('/api/superadmin/pay') && method === 'POST') {
-    const schoolId = Number(path.split('/').pop() || body.school_id || 1);
-    const schools = getCol('schools');
-    const school = schools.find((s: any) => s.id === schoolId);
-    const schoolName = school ? school.name : 'Unknown School';
-    
-    const submissions = getCol('payment_submissions');
-    const newId = submissions.length > 0 ? Math.max(...submissions.map((s: any) => s.id)) + 1 : 1;
-    submissions.push({
-      id: newId,
-      school_id: schoolId,
-      school_name: schoolName,
-      reference: body.reference || ('MPESA' + Math.random().toString(36).substring(4, 9).toUpperCase()),
-      amount: body.amount || 1500,
-      phone: body.phone || '254700000000',
-      sender_name: body.sender_name || 'Admin Depositor',
-      status: 'pending',
-      created_at: new Date().toISOString()
-    });
-    saveCol('payment_submissions', submissions);
-
-    if (school) {
-      school.paid_status = 'pending_activation';
-    }
-    saveCol('schools', schools);
-    return makeEmulatorResponse({ success: true });
-  }
-
-  if (path === '/api/students' && method === 'GET') {
-    return makeEmulatorResponse(getCol('students'));
-  }
-  if (path === '/api/students' && method === 'POST') {
-    const items = getCol('students');
-    const newId = items.length > 0 ? Math.max(...items.map((i: any) => i.id)) + 1 : 1;
-    const record = { id: newId, ...body, school_id: Number(body.school_id || 1) };
-    items.push(record);
-    saveCol('students', items);
-    return makeEmulatorResponse({ success: true });
-  }
-  if (path === '/api/students/import' && method === 'POST') {
-    const students = getCol('students');
-    const incoming = Array.isArray(body.students) ? body.students : [];
-    let startId = students.length > 0 ? Math.max(...students.map((i: any) => i.id)) + 1 : 1;
-    for (const st of incoming) {
-      students.push({
-        id: startId++,
-        name: st.name,
-        admission_number: st.admission_number,
-        school_id: Number(body.school_id || 1),
-        course_id: Number(body.course_id || 1),
-        intake: body.intake || 'May 2026'
-      });
-    }
-    saveCol('students', students);
-    return makeEmulatorResponse({ success: true, count: incoming.length });
-  }
-  if (path.startsWith('/api/students/') && method === 'PUT') {
-    const id = Number(path.split('/').pop());
-    const items = getCol('students');
-    const found = items.find((i: any) => i.id === id);
-    if (found) {
-      Object.assign(found, body);
-      saveCol('students', items);
-    }
-    return makeEmulatorResponse({ success: true });
-  }
-  if (path.startsWith('/api/students/') && method === 'DELETE') {
-    const id = Number(path.split('/').pop());
-    let items = getCol('students');
-    items = items.filter((i: any) => i.id !== id);
-    saveCol('students', items);
-    return makeEmulatorResponse({ success: true });
-  }
-
-  if (path === '/api/units' && method === 'GET') {
-    return makeEmulatorResponse(getCol('units'));
-  }
-  if (path === '/api/units' && method === 'POST') {
-    const items = getCol('units');
-    const newId = items.length > 0 ? Math.max(...items.map((i: any) => i.id)) + 1 : 1;
-    const record = { id: newId, ...body, school_id: Number(body.school_id || 1) };
-    items.push(record);
-    saveCol('units', items);
-    return makeEmulatorResponse({ success: true });
-  }
-  if (path.startsWith('/api/units/') && method === 'PUT') {
-    const id = Number(path.split('/').pop());
-    const items = getCol('units');
-    const found = items.find((i: any) => i.id === id);
-    if (found) {
-      Object.assign(found, body);
-      saveCol('units', items);
-    }
-    return makeEmulatorResponse({ success: true });
-  }
-  if (path.startsWith('/api/units/') && method === 'DELETE') {
-    const id = Number(path.split('/').pop());
-    let items = getCol('units');
-    items = items.filter((i: any) => i.id !== id);
-    saveCol('units', items);
-    return makeEmulatorResponse({ success: true });
-  }
-
-  if (path === '/api/departments' && method === 'GET') {
-    return makeEmulatorResponse(getCol('departments'));
-  }
-  if (path === '/api/departments' && method === 'POST') {
-    const items = getCol('departments');
-    const newId = items.length > 0 ? Math.max(...items.map((i: any) => i.id)) + 1 : 1;
-    const record = { id: newId, ...body, school_id: Number(body.school_id || 1) };
-    items.push(record);
-    saveCol('departments', items);
-    return makeEmulatorResponse({ success: true });
-  }
-  if (path.startsWith('/api/departments/') && method === 'DELETE') {
-    const id = Number(path.split('/').pop());
-    let items = getCol('departments');
-    items = items.filter((i: any) => i.id !== id);
-    saveCol('departments', items);
-    return makeEmulatorResponse({ success: true });
-  }
-
-  if (path === '/api/courses' && method === 'GET') {
-    return makeEmulatorResponse(getCol('courses'));
-  }
-  if (path === '/api/courses' && method === 'POST') {
-    const items = getCol('courses');
-    const newId = items.length > 0 ? Math.max(...items.map((i: any) => i.id)) + 1 : 1;
-    const record = { id: newId, ...body };
-    items.push(record);
-    saveCol('courses', items);
-    return makeEmulatorResponse({ success: true });
-  }
-  if (path.startsWith('/api/courses/') && method === 'DELETE') {
-    const id = Number(path.split('/').pop());
-    let items = getCol('courses');
-    items = items.filter((i: any) => i.id !== id);
-    saveCol('courses', items);
-    return makeEmulatorResponse({ success: true });
-  }
-
-  if (path === '/api/intakes' && method === 'GET') {
-    return makeEmulatorResponse(getCol('intakes'));
-  }
-  if (path === '/api/intakes' && method === 'POST') {
-    const items = getCol('intakes');
-    const newId = items.length > 0 ? Math.max(...items.map((i: any) => i.id)) + 1 : 1;
-    const record = { id: newId, ...body };
-    items.push(record);
-    saveCol('intakes', items);
-    return makeEmulatorResponse({ success: true });
-  }
-  if (path.startsWith('/api/intakes/') && method === 'DELETE') {
-    const id = Number(path.split('/').pop());
-    let items = getCol('intakes');
-    items = items.filter((i: any) => i.id !== id);
-    saveCol('intakes', items);
-    return makeEmulatorResponse({ success: true });
-  }
-
-  if (path === '/api/auth/verify' && method === 'POST') {
-    const settings = getSettings();
-    const key = body.role === 'rep' ? 'rep_password' : 'lecturer_password';
-    const originalPassword = key === 'rep_password' ? (settings.rep_password || 'admin123') : (settings.lecturer_password || 'lecturer123');
-    if (originalPassword === body.password) {
-      return makeEmulatorResponse({ success: true });
-    } else {
-      return makeEmulatorResponse({ success: false, error: 'Invalid password' }, 401);
-    }
-  }
-
-  if (path === '/api/settings/passwords' && method === 'POST') {
-    const { rep_password, lecturer_password } = body;
-    const settings = getSettings();
-    if (rep_password) settings.rep_password = rep_password;
-    if (lecturer_password) settings.lecturer_password = lecturer_password;
-    saveSettings(settings);
-    return makeEmulatorResponse({ success: true });
-  }
-
-  if (path === '/api/settings/profile' && method === 'GET') {
-    const settings = getSettings();
-    return makeEmulatorResponse({
-      rep_name: settings.representative_name || 'Class Representative',
-      rep_password: settings.rep_password || 'admin123',
-      lecturer_password: settings.lecturer_password || 'lecturer123',
-      rep_email: settings.rep_email || 'rep@school.edu',
-      rep_phone: settings.rep_phone || '+254700000000',
-      rep_avatar: settings.rep_avatar || '',
-      otp_duration_mins: Number(settings.otp_duration_mins || 20),
-      late_threshold_mins: Number(settings.late_threshold_mins || 5)
-    });
-  }
-
-  if (path === '/api/settings/profile' && method === 'POST') {
-    const settings = getSettings();
-    Object.assign(settings, {
-      representative_name: body.rep_name,
-      rep_password: body.rep_password,
-      lecturer_password: body.lecturer_password,
-      rep_email: body.rep_email,
-      rep_phone: body.rep_phone,
-      rep_avatar: body.rep_avatar,
-      otp_duration_mins: String(body.otp_duration_mins || 20),
-      late_threshold_mins: String(body.late_threshold_mins || 5)
-    });
-    saveSettings(settings);
-    return makeEmulatorResponse({ success: true });
-  }
-
-  if (path === '/api/license/status' && method === 'GET') {
-    return makeEmulatorResponse({ status: 'active', paid_status: 'paid' });
-  }
-
-  if (path === '/api/units/lecturers' && method === 'GET') {
-    const units = getCol('units');
-    const lecturers = Array.from(new Set(units.map((u: any) => u.lecturer))).filter(Boolean);
-    return makeEmulatorResponse(lecturers);
-  }
-
-  if (path.startsWith('/api/lecturer/my-otp') && method === 'GET') {
-    const lessons = getCol('lessons');
-    const active = lessons.find((l: any) => !l.end_time);
-    if (!active) return makeEmulatorResponse({ error: 'No active session' }, 404);
-    return makeEmulatorResponse({ otp: active.lecturer_otp });
-  }
-
-  if (path === '/api/lessons/start' && method === 'POST') {
-    const lessons = getCol('lessons');
-    const newId = lessons.length > 0 ? Math.max(...lessons.map((l: any) => l.id)) + 1 : 1;
-    const lecturer_otp = Math.floor(1000 + Math.random() * 9000).toString();
-    const newLesson = {
-      id: newId,
-      unit_id: Number(body.unit_id),
-      date: new Date().toISOString().split('T')[0],
-      venue: body.venue || 'Lecture Hall A',
-      duration: Number(body.duration || 2),
-      start_time: new Date().toISOString(),
-      end_time: null,
-      scheduled_start: new Date().toISOString(),
-      scheduled_end: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
-      lecturer_otp,
-      lecturer_present: 1,
-      otp_enabled: 1,
-      school_id: Number(body.school_id || 1)
-    };
-    lessons.push(newLesson);
-    saveCol('lessons', lessons);
-    return makeEmulatorResponse({ success: true, lesson_id: newId, otp: lecturer_otp });
-  }
-
-  if (path === '/api/lessons/restart' && method === 'POST') {
-    const lessons = getCol('lessons');
-    const active = lessons.find((l: any) => !l.end_time);
-    if (active) {
-      active.lecturer_otp = Math.floor(1000 + Math.random() * 9000).toString();
-      saveCol('lessons', lessons);
-      return makeEmulatorResponse({ success: true, otp: active.lecturer_otp });
-    }
-    return makeEmulatorResponse({ error: 'No active lesson to restart' }, 400);
-  }
-
-  if (path.startsWith('/api/lessons/') && path.endsWith('/enable-otp') && method === 'POST') {
-    return makeEmulatorResponse({ success: true });
-  }
-
-  if (path === '/api/lessons/active' && method === 'GET') {
-    const lessons = getCol('lessons');
-    const active = lessons.find((l: any) => !l.end_time);
-    if (active) {
-      const units = getCol('units');
-      const unit = units.find((u: any) => u.id === active.unit_id) || { name: 'FIT Unit', lecturer: 'Standard Lecturer' };
-      return makeEmulatorResponse({
-        ...active,
-        unit_name: unit.name,
-        lecturer: unit.lecturer
-      });
-    }
-    return makeEmulatorResponse(null);
-  }
-
-  if (path === '/api/attendance/mark' && method === 'POST') {
-    const attendance = getCol('attendance');
-    const newId = attendance.length > 0 ? Math.max(...attendance.map((a: any) => a.id)) + 1 : 1;
-    const record = {
-      id: newId,
-      lesson_id: Number(body.lesson_id),
-      student_id: Number(body.student_id),
-      otp: body.otp,
-      status: body.status || 'present',
-      marked_at: new Date().toISOString()
-    };
-    attendance.push(record);
-    saveCol('attendance', attendance);
-    return makeEmulatorResponse({ success: true });
-  }
-
-  if (path === '/api/lecturer/mark' && method === 'POST') {
-    const attendance = getCol('attendance');
-    const lessons = getCol('lessons');
-    const active = lessons.find((l: any) => !l.end_time);
-    if (!active) return makeEmulatorResponse({ error: 'No active session' }, 400);
-
-    const matchIdx = attendance.findIndex((a: any) => a.lesson_id === active.id && a.student_id === Number(body.student_id));
-    if (matchIdx >= 0) {
-      attendance[matchIdx].status = body.status;
-      attendance[matchIdx].marked_at = new Date().toISOString();
-    } else {
-      const newId = attendance.length > 0 ? Math.max(...attendance.map((a: any) => a.id)) + 1 : 1;
-      attendance.push({
-        id: newId,
-        lesson_id: active.id,
-        student_id: Number(body.student_id),
-        otp: 'L-DIRECT',
-        status: body.status,
-        marked_at: new Date().toISOString()
-      });
-    }
-    saveCol('attendance', attendance);
-    return makeEmulatorResponse({ success: true });
-  }
-
-  if (path.startsWith('/api/attendance/my-otp') && method === 'GET') {
-    const lessonId = Number(parsedUrl.searchParams.get('lesson_id'));
-    const studentId = Number(parsedUrl.searchParams.get('student_id'));
-    const lessons = getCol('lessons');
-    const lesson = lessons.find((l: any) => l.id === lessonId);
-    if (!lesson) return makeEmulatorResponse({ error: 'Lesson not found' }, 404);
-    
-    const att = getCol('attendance');
-    const found = att.find((a: any) => a.lesson_id === lessonId && a.student_id === studentId);
-    if (found) {
-      return makeEmulatorResponse({ otp: found.otp });
-    }
-    const generatedOtp = 'S-' + Math.floor(1000 + Math.random() * 9000);
-    return makeEmulatorResponse({ otp: generatedOtp });
-  }
-
-  if (path.startsWith('/api/session/enter') && method === 'POST') {
-    return makeEmulatorResponse({ success: true });
-  }
-  if (path.startsWith('/api/session/heartbeat') && method === 'POST') {
-    return makeEmulatorResponse({ success: true });
-  }
-
-  if (path.startsWith('/api/reports/unit/') && method === 'GET') {
-    const unitId = Number(path.split('/').pop());
-    const attendance = getCol('attendance');
-    const students = getCol('students');
-    const lessons = getCol('lessons').filter((l: any) => l.unit_id === unitId);
-    
-    const records = lessons.flatMap((l: any) => {
-      const attList = attendance.filter((a: any) => a.lesson_id === l.id);
-      return students.map((s: any) => {
-        const found = attList.find((a: any) => a.student_id === s.id);
-        return {
-          id: l.id + '-' + s.id,
-          student_id: s.id,
-          student_name: s.name,
-          admission_number: s.admission_number,
-          date: l.date,
-          status: found ? found.status : 'absent',
-          marked_at: found ? found.marked_at : null
-        };
-      });
-    });
-    return makeEmulatorResponse(records);
-  }
-
-  if (path === '/api/warnings' && method === 'GET') {
-    return makeEmulatorResponse(getCol('student_warnings'));
-  }
-  if (path === '/api/warnings/forward' && method === 'POST') {
-    const warnings = getCol('student_warnings');
-    const found = warnings.find((w: any) => w.id === Number(body.warning_id));
-    if (found) found.status = 'forwarded';
-    saveCol('student_warnings', warnings);
-    return makeEmulatorResponse({ success: true });
-  }
-  if (path === '/api/warnings/clear' && method === 'POST') {
-    let warnings = getCol('student_warnings');
-    warnings = warnings.filter((w: any) => w.id !== Number(body.warning_id));
-    saveCol('student_warnings', warnings);
-    return makeEmulatorResponse({ success: true });
-  }
-
-  if (path === '/api/reports/weekly' && method === 'GET') {
-    return makeEmulatorResponse([
-      { date: 'Mon', present: 45, absent: 5, late: 2 },
-      { date: 'Tue', present: 48, absent: 3, late: 1 },
-      { date: 'Wed', present: 42, absent: 7, late: 3 },
-      { date: 'Thu', present: 50, absent: 1, late: 0 },
-      { date: 'Fri', present: 46, absent: 4, late: 2 }
-    ]);
-  }
-
-  if (path === '/api/ai/query' && method === 'POST') {
-    return makeEmulatorResponse({
-      reply: "Hello! I am Gemini. This system is currently offline or running in emulated Vercel environment, so physical database queries are fully simulated offline. Let me know how I can guide you!"
-    });
-  }
-
-  return makeEmulatorResponse({ error: 'Endpoint of emulated database API not found: ' + path }, 404);
-};
-
-const fetch = async (url: RequestInfo | URL, options?: RequestInit): Promise<Response> => {
-  const urlStr = typeof url === 'string' ? url : (url instanceof URL ? url.toString() : (url as Request).url || '');
-  if (urlStr.includes('/api/')) {
-    if (emulatorEnabled) {
-      try {
-        return await handleEmulatedRequest(urlStr, options);
-      } catch (err: any) {
-        console.error('[Emulated DB Router Error]', err);
-        return makeEmulatorResponse({ error: err.message }, 500);
-      }
-    } else {
-      try {
-        const response = await originalFetch(url, options);
-        const contentType = response.headers.get('content-type') || '';
-        if (response.status === 404 || contentType.includes('text/html') || response.status === 502) {
-          console.warn('[System] Live host returned 404/html SPA layout for API. Invoking emulator failover...');
-          emulatorEnabled = true;
-          localStorage.setItem('emulator_force_enabled', 'true');
-          return await handleEmulatedRequest(urlStr, options);
-        }
-        return response;
-      } catch (networkError) {
-        console.warn('[System] Primary backend unreachable (Failed to Fetch). Switching live session to Emulator Mode...', networkError);
-        emulatorEnabled = true;
-        localStorage.setItem('emulator_force_enabled', 'true');
-        return await handleEmulatedRequest(urlStr, options);
-      }
-    }
-  }
-  return originalFetch(url, options);
-};
 
 // --- Types ---
 interface Student {
@@ -6202,49 +5407,53 @@ export default function App() {
       </main>
 
       {/* Footer Info */}
-      <footer className="fixed bottom-0 left-0 right-0 bg-white/50 dark:bg-zinc-900/50 backdrop-blur-md border-t border-black/5 dark:border-white/10 p-4 flex flex-wrap justify-center items-center gap-6 z-50">
+      <footer className="fixed bottom-0 left-0 right-0 bg-white/70 dark:bg-zinc-940/70 backdrop-blur-md border-t border-black/5 dark:border-white/10 py-1 px-3 flex flex-wrap justify-center items-center gap-x-3 gap-y-1 sm:gap-x-4 sm:gap-y-1.5 z-50 select-none">
         <div 
           onClick={() => alert('HYBRID OFFLINE COEXISTENCE:\n\nThis application is engineered for student offline resilience. If students are offline or have limited connection, the local storage caches state automatically. Lecturers, Reps, and Superadmins can update courses, lectures, and active rosters online, and these changes are cached of student-side records and seamlessly synchronise, rendering continuous coordination reliable in both connected and disconnected environments.')}
-          className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-[9px] font-black uppercase tracking-widest rounded-full cursor-pointer hover:bg-emerald-100 transition-all select-none"
+          className="flex items-center gap-1.5 px-2 py-0.5 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-[8px] font-black uppercase tracking-widest rounded-full cursor-pointer hover:bg-emerald-100 dark:hover:bg-emerald-900/30 transition-all select-none"
           title="Click to view details on offline/online synchronization"
         >
           <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping" />
           <span>🌐 Hybrid Sync: Active</span>
         </div>
-        <div className="h-4 w-px bg-black/10 dark:bg-white/10" />
-        <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-neutral-400 dark:text-zinc-500">
-          <Info className="w-3 h-3" /> 
+        
+        <div className="hidden sm:block h-3.5 w-px bg-black/10 dark:bg-white/10" />
+        
+        <div className="flex items-center gap-1.5 text-[9px] sm:text-[10px] font-bold uppercase tracking-widest text-neutral-400 dark:text-zinc-500">
+          <Info className="w-2.5 h-2.5" /> 
           {isLecturerPortal ? 'LECTURER MODE' : isRepPortal ? 'REPRESENTATIVE MODE' : isDevPortal ? 'DEVELOPER CONTROL' : isSuperAdminPortal ? 'SUPERADMIN OVERSIGHT' : 'STUDENT MODE'}
         </div>
-        <div className="h-4 w-px bg-black/10 dark:bg-white/10" />
-        <div className="flex gap-4">
+        
+        <div className="hidden sm:block h-3.5 w-px bg-black/10 dark:bg-white/10" />
+        
+        <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
           <Link 
             to="/" 
-            className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 ${location.pathname === '/' ? 'text-emerald-600 dark:text-emerald-400' : 'text-black dark:text-zinc-300 hover:underline'}`}
+            className={`text-[9px] sm:text-[10px] font-black uppercase tracking-widest flex items-center gap-1 ${location.pathname === '/' ? 'text-emerald-600 dark:text-emerald-400' : 'text-neutral-600 dark:text-zinc-400 hover:text-black dark:hover:text-white transition-colors'}`}
           >
             Student
           </Link>
           <Link 
             to="/lecturer-portal" 
-            className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 ${location.pathname === '/lecturer-portal' ? 'text-emerald-600 dark:text-emerald-400' : 'text-black dark:text-zinc-300 hover:underline'}`}
+            className={`text-[9px] sm:text-[10px] font-black uppercase tracking-widest flex items-center gap-1 ${location.pathname === '/lecturer-portal' ? 'text-emerald-600 dark:text-emerald-400' : 'text-neutral-600 dark:text-zinc-400 hover:text-black dark:hover:text-white transition-colors'}`}
           >
             Lecturer
           </Link>
           <Link 
             to="/rep-portal-access" 
-            className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 ${location.pathname === '/rep-portal-access' ? 'text-emerald-600 dark:text-emerald-400' : 'text-black dark:text-zinc-300 hover:underline'}`}
+            className={`text-[9px] sm:text-[10px] font-black uppercase tracking-widest flex items-center gap-1 ${location.pathname === '/rep-portal-access' ? 'text-emerald-600 dark:text-emerald-400' : 'text-neutral-600 dark:text-zinc-400 hover:text-black dark:hover:text-white transition-colors'}`}
           >
             Rep Portal
           </Link>
           <Link 
             to="/school-superadmin" 
-            className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 ${location.pathname === '/school-superadmin' ? 'text-emerald-600 dark:text-emerald-400' : 'text-black dark:text-zinc-300 hover:underline'}`}
+            className={`text-[9px] sm:text-[10px] font-black uppercase tracking-widest flex items-center gap-1 ${location.pathname === '/school-superadmin' ? 'text-emerald-600 dark:text-emerald-400' : 'text-neutral-600 dark:text-zinc-400 hover:text-black dark:hover:text-white transition-colors'}`}
           >
             Superadmin
           </Link>
           <Link 
             to="/developer/panel" 
-            className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 ${location.pathname === '/developer/panel' ? 'text-emerald-600 dark:text-emerald-400' : 'text-black dark:text-zinc-300 hover:underline'}`}
+            className={`text-[9px] sm:text-[10px] font-black uppercase tracking-widest flex items-center gap-1 ${location.pathname === '/developer/panel' ? 'text-emerald-600 dark:text-emerald-400' : 'text-neutral-600 dark:text-zinc-400 hover:text-black dark:hover:text-white transition-colors'}`}
           >
             Developer
           </Link>
@@ -6253,40 +5462,41 @@ export default function App() {
         {/* Manual Lock Action trigger for password-login systems */}
         {(repAuth || lecturerAuth || localStorage.getItem('auth_developer') === 'true' || localStorage.getItem('auth_superadmin') === 'true') && (
           <>
-            <div className="h-4 w-px bg-black/10 dark:bg-white/10" />
+            <div className="hidden sm:block h-3.5 w-px bg-black/10 dark:bg-white/10" />
             <button
               onClick={() => {
                 setIsLocked(true);
                 localStorage.setItem('portal_locked_state', 'true');
               }}
-              className="p-1 px-3 bg-red-650 hover:bg-neutral-100 dark:hover:bg-zinc-800 rounded-lg text-red-500 transition-colors flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest cursor-pointer border border-red-500/10"
+              className="p-0.5 px-2 bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-400 rounded-md transition-colors flex items-center gap-1 text-[8px] sm:text-[9px] font-black uppercase tracking-widest cursor-pointer border border-red-500/10"
               title="Lock Current Session"
             >
-              <Lock className="w-3.5 h-3.5" />
+              <Lock className="w-3 h-3" />
               <span>Lock Portal</span>
             </button>
           </>
         )}
 
-        <div className="h-4 w-px bg-black/10 dark:bg-white/10" />
+        <div className="hidden sm:block h-3.5 w-px bg-black/10 dark:bg-white/10" />
+        
         <button
           onClick={() => setIsDarkMode(!isDarkMode)}
-          className="p-1 px-3 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 transition-all flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest border border-emerald-500/25 cursor-pointer"
+          className="p-0.5 px-2 rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 transition-all flex items-center gap-1 text-[8px] sm:text-[9px] font-black uppercase tracking-widest border border-emerald-500/20 cursor-pointer"
           title={isDarkMode ? 'Switch to Eye-Safe Light Mode' : 'Switch to Space Dark Mode'}
         >
           {isDarkMode ? (
             <>
-              <svg className="w-3.5 h-3.5 text-emerald-600 fill-emerald-600 dark:text-emerald-400 dark:fill-emerald-400" viewBox="0 0 20 20" fill="currentColor">
+              <svg className="w-3 h-3 text-emerald-600 fill-emerald-600 dark:text-emerald-400 dark:fill-emerald-400" viewBox="0 0 20 20" fill="currentColor">
                 <path fillRule="evenodd" d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464a1 1 0 10-1.414 1.414l.707.707a1 1 0 001.414-1.414l-.707-.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 100 2h1z" clipRule="evenodd" />
               </svg>
-              <span>EYE-SAFE LIGHT THEME</span>
+              <span>EYE-SAFE LIGHT</span>
             </>
           ) : (
             <>
-              <svg className="w-3.5 h-3.5 text-emerald-600 fill-emerald-600 dark:text-emerald-400 dark:fill-emerald-400" viewBox="0 0 20 20" fill="currentColor">
+              <svg className="w-3 h-3 text-emerald-600 fill-emerald-600 dark:text-emerald-400 dark:fill-emerald-400" viewBox="0 0 20 20" fill="currentColor">
                 <path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z" />
               </svg>
-              <span>SPACE DARK ACTIVE</span>
+              <span>SPACE DARK</span>
             </>
           )}
         </button>
