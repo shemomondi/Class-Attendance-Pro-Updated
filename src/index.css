@@ -6,6 +6,7 @@
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --color-zinc-850: #1c1f26;
 
   --animate-float-slow-1: float-slow-1 22s infinite alternate ease-in-out;
   --animate-float-slow-2: float-slow-2 28s infinite alternate ease-in-out;
