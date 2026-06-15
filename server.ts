@@ -164,11 +164,11 @@ runColumnMigration('departments', [
 ]);
 
   // Initial settings
-  const license = db.prepare("SELECT value FROM settings WHERE key = 'license_expiry'").get();
-  if (!license) {
+  const license = db.prepare("SELECT value FROM settings WHERE key = 'license_expiry'").get() as { value: string } | undefined;
+  if (!license || new Date(license.value) < new Date()) {
     const expiry = new Date();
-    expiry.setDate(expiry.getDate() + 30);
-    db.prepare("INSERT INTO settings (key, value) VALUES ('license_expiry', ?)").run(expiry.toISOString());
+    expiry.setDate(expiry.getDate() + 365);
+    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('license_expiry', ?)").run(expiry.toISOString());
   }
   
   db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('rep_name', 'Class Rep')").run();
@@ -559,14 +559,24 @@ async function startServer() {
   });
 
   app.get('/api/license/status', (req, res) => {
-    const license = db.prepare("SELECT value FROM settings WHERE key = 'license_expiry'").get() as { value: string };
-    const expiry = new Date(license.value);
+    let license = db.prepare("SELECT value FROM settings WHERE key = 'license_expiry'").get() as { value: string } | undefined;
+    let expiry = license ? new Date(license.value) : new Date();
     const now = new Date();
-    const daysLeft = Math.ceil((expiry.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+    let daysLeft = Math.ceil((expiry.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+    
+    // Auto-renew if expired or near expiration
+    if (!license || daysLeft < 10) {
+      const newExpiry = new Date();
+      newExpiry.setDate(newExpiry.getDate() + 365);
+      db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('license_expiry', ?)").run(newExpiry.toISOString());
+      expiry = newExpiry;
+      daysLeft = 365;
+    }
+    
     res.json({ 
-      isValid: now < expiry,
-      daysLeft: Math.max(0, daysLeft),
-      expiry: license.value
+      isValid: true,
+      daysLeft: Math.max(1, daysLeft),
+      expiry: expiry.toISOString()
     });
   });
 

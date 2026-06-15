@@ -716,7 +716,13 @@ const handleEmulatedRequest = async (url: string, options?: RequestInit): Promis
   }
 
   if (path === '/api/license/status' && method === 'GET') {
-    return makeEmulatorResponse({ status: 'active', paid_status: 'paid' });
+    const defaultExpiry = new Date();
+    defaultExpiry.setDate(defaultExpiry.getDate() + 365);
+    return makeEmulatorResponse({
+      isValid: true,
+      daysLeft: 365,
+      expiry: defaultExpiry.toISOString()
+    });
   }
 
   if (path === '/api/units/lecturers' && method === 'GET') {
