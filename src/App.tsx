@@ -4654,6 +4654,11 @@ const DeveloperPanel = () => {
   const [schools, setSchools] = useState<any[]>([]);
   const [reports, setReports] = useState<any[]>([]);
   const [selectedSchool, setSelectedSchool] = useState<any | null>(null);
+
+  // Dev portal registry password editing states
+  const [editingReportIdx, setEditingReportIdx] = useState<number | null>(null);
+  const [editingPasswordVal, setEditingPasswordVal] = useState('');
+  const [editingUsernameVal, setEditingUsernameVal] = useState('');
   const [schoolInspectionData, setSchoolInspectionData] = useState<any | null>(null);
   const [billingAmount, setBillingAmount] = useState('15000');
   const [superUsername, setSuperUsername] = useState('');
@@ -4717,6 +4722,39 @@ const DeveloperPanel = () => {
       await fetchPaymentSubmissions();
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  const handleEditRegistryPassword = async (p: any) => {
+    if (!editingPasswordVal.trim()) {
+      alert('Password cannot * be empty.');
+      return;
+    }
+    if (p.role === 'Superadmin' && !editingUsernameVal.trim()) {
+      alert('Username cannot be empty.');
+      return;
+    }
+    try {
+      const res = await fetch('/api/developer/update-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          role: p.role,
+          school_id: p.school_id,
+          username: p.role === 'Superadmin' ? editingUsernameVal.trim() : undefined,
+          password: editingPasswordVal.trim()
+        })
+      });
+      if (res.ok) {
+        alert('Password credentials updated successfully!');
+        setEditingReportIdx(null);
+        fetchDeveloperData();
+      } else {
+        const err = await res.json();
+        alert(err.error || 'Failed to update credentials.');
+      }
+    } catch (e) {
+      alert('Error updating credentials.');
     }
   };
 
@@ -5396,31 +5434,86 @@ const DeveloperPanel = () => {
 
           <div className="bg-white dark:bg-zinc-900 border border-black/5 dark:border-white/10 rounded-3xl overflow-hidden shadow-sm">
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs border-collapse">
+              <table className="w-full text-left text-xs border-collapse font-sans">
                 <thead>
                   <tr className="bg-neutral-50 dark:bg-zinc-800/50 uppercase tracking-widest font-mono text-[9px] text-neutral-400 font-bold border-b border-black/5 dark:border-white/10">
                     <th className="py-3 px-4">Entity User</th>
                     <th className="py-3 px-4">School/University</th>
                     <th className="py-3 px-4">User Role</th>
                     <th className="py-3 px-4 font-mono">Password Credentials</th>
+                    <th className="py-3 px-4 text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-black/5 dark:divide-white/10 font-sans">
-                  {reports.map((p, idx) => (
-                    <tr key={idx} className="hover:bg-neutral-50 dark:hover:bg-zinc-900/40 text-neutral-700 dark:text-zinc-100">
-                      <td className="py-3 px-4 font-bold">{p.user_name}</td>
-                      <td className="py-3 px-4 uppercase text-[10px] text-neutral-500">{p.school_name}</td>
-                      <td className="py-3 px-4">
-                        <span className={`px-2 py-0.5 rounded-full text-[9px] uppercase font-mono tracking-wider font-bold ${p.role === 'Superadmin' ? 'bg-purple-100 text-purple-700 dark:bg-purple-950/20 dark:text-purple-300' : p.role === 'Representative' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/20' : 'bg-neutral-100 text-neutral-600 dark:bg-zinc-800'}`}>
-                          {p.role}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 font-mono font-bold tracking-widest text-emerald-600 dark:text-emerald-400 text-sm select-all">{p.password}</td>
-                    </tr>
-                  ))}
+                <tbody className="divide-y divide-black/5 dark:divide-white/10">
+                  {reports.map((p, idx) => {
+                    const isEditing = editingReportIdx === idx;
+                    return (
+                      <tr key={idx} className="hover:bg-neutral-50 dark:hover:bg-zinc-900/40 text-neutral-700 dark:text-zinc-100">
+                        <td className="py-3 px-4 font-bold">
+                          {isEditing && p.role === 'Superadmin' ? (
+                            <input 
+                              type="text" 
+                              className="px-2 py-1 bg-neutral-50 dark:bg-zinc-800 text-xs text-neutral-900 dark:text-zinc-100 border border-black/10 dark:border-white/10 rounded font-mono font-bold"
+                              value={editingUsernameVal}
+                              onChange={e => setEditingUsernameVal(e.target.value)}
+                            />
+                          ) : (
+                            p.user_name
+                          )}
+                        </td>
+                        <td className="py-3 px-4 uppercase text-[10px] text-neutral-500">{p.school_name}</td>
+                        <td className="py-3 px-4">
+                          <span className={`px-2 py-0.5 rounded-full text-[9px] uppercase font-mono tracking-wider font-bold ${p.role === 'Superadmin' ? 'bg-purple-100 text-purple-700 dark:bg-purple-950/20 dark:text-purple-300' : p.role === 'Representative' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/20' : 'bg-neutral-100 text-neutral-600 dark:bg-zinc-805'}`}>
+                            {p.role}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4">
+                          {isEditing ? (
+                            <input 
+                              type="text" 
+                              className="w-full max-w-xs px-2 py-1 bg-neutral-50 dark:bg-zinc-800 text-xs text-neutral-900 dark:text-zinc-100 border border-black/10 dark:border-white/10 rounded font-mono font-bold" 
+                              value={editingPasswordVal}
+                              onChange={e => setEditingPasswordVal(e.target.value)}
+                            />
+                          ) : (
+                            <span className="font-mono font-bold tracking-widest text-emerald-600 dark:text-emerald-400 text-sm select-all">{p.password}</span>
+                          )}
+                        </td>
+                        <td className="py-3 px-4 text-right">
+                          {isEditing ? (
+                            <div className="flex gap-1 justify-end">
+                              <button 
+                                onClick={() => handleEditRegistryPassword(p)}
+                                className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] uppercase font-bold tracking-wider rounded cursor-pointer"
+                              >
+                                Save
+                              </button>
+                              <button 
+                                onClick={() => setEditingReportIdx(null)}
+                                className="px-2.5 py-1 bg-neutral-200 hover:bg-neutral-300 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-neutral-700 dark:text-neutral-300 text-[10px] uppercase font-bold tracking-wider rounded cursor-pointer"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <button 
+                              onClick={() => {
+                                setEditingReportIdx(idx);
+                                setEditingPasswordVal(p.password);
+                                setEditingUsernameVal(p.user_name);
+                              }}
+                              className="px-3 py-1 bg-neutral-100 hover:bg-neutral-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-neutral-700 dark:text-neutral-300 text-[10px] font-bold uppercase tracking-wider rounded-lg flex items-center gap-1 ml-auto cursor-pointer"
+                            >
+                              <Edit className="w-3 h-3" /> Edit Pass
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                   {reports.length === 0 && (
                     <tr>
-                      <td colSpan={4} className="py-12 text-center text-neutral-400 uppercase font-mono tracking-widest text-[10px]">No password reports indexed yet</td>
+                      <td colSpan={5} className="py-12 text-center text-neutral-400 uppercase font-mono tracking-widest text-[10px]">No password reports indexed yet</td>
                     </tr>
                   )}
                 </tbody>
@@ -5679,7 +5772,51 @@ const SuperadminPortal = () => {
   const [recentLessons, setRecentLessons] = useState<any[]>([]);
   const [passwordsList, setPasswordsList] = useState<any[]>([]);
   const [schoolObj, setSchoolObj] = useState<any | null>(null);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'passwords' | 'ai' | 'announcements' | 'billing'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'passwords' | 'ai' | 'announcements' | 'billing' | 'profile'>('dashboard');
+
+  // Profile Settings State Support
+  const [profileUsername, setProfileUsername] = useState('');
+  const [profilePassword, setProfilePassword] = useState('');
+  const [showProfilePass, setShowProfilePass] = useState(false);
+  const [profileSaving, setProfileSaving] = useState(false);
+
+  useEffect(() => {
+    if (schoolObj) {
+      setProfileUsername(schoolObj.super_username || '');
+      setProfilePassword(schoolObj.super_password || '');
+    }
+  }, [schoolObj]);
+
+  const handleUpdateProfileSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!profileUsername.trim() || !profilePassword.trim()) {
+      alert('Please fill out both the Username and Password fields.');
+      return;
+    }
+    setProfileSaving(true);
+    try {
+      const res = await fetch('/api/superadmin/profile', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          school_id: schoolId,
+          username: profileUsername.trim(),
+          password: profilePassword.trim()
+        })
+      });
+      if (res.ok) {
+        alert('Superadmin Profile credentials updated successfully!');
+        fetchSuperAdminViewDetails();
+      } else {
+        const err = await res.json();
+        alert(err.error || 'Failed to update credentials.');
+      }
+    } catch (err) {
+      alert('Error updating credentials on server.');
+    } finally {
+      setProfileSaving(false);
+    }
+  };
 
   // AI Chat States
   const [aiChat, setAiChat] = useState<{ sender: 'user' | 'bot', text: string }[]>([]);
@@ -5987,42 +6124,6 @@ Please verify the transaction and activate our portal access standardly. Thank y
             </div>
 
             <div className="space-y-1">
-              <div className="flex justify-between items-center mr-1">
-                <label className="text-[10px] font-bold uppercase tracking-widest text-neutral-400 dark:text-zinc-500 ml-1">SUPERADMIN USERNAME</label>
-                {schools.find(s => s.id === schoolId)?.super_username && schools.find(s => s.id === schoolId)?.super_username !== 'None' && (
-                  <span className="text-[8px] uppercase tracking-wider font-bold text-neutral-400 dark:text-zinc-500 font-mono">
-                    Registered: {schools.find(s => s.id === schoolId)?.super_username}
-                  </span>
-                )}
-              </div>
-              
-              {/* Choice dropdown for username selection */}
-              <div className="space-y-2">
-                <select 
-                  className="w-full px-4 py-2.5 bg-neutral-50 dark:bg-zinc-800 text-neutral-900 dark:text-zinc-100 border border-black/5 dark:border-white/10 rounded-xl text-xs font-bold focus:outline-[#059669]"
-                  value={username}
-                  onChange={e => setUsername(e.target.value)}
-                  required
-                >
-                  <option value="">-- Choose Account Username --</option>
-                  {(() => {
-                    const sel = schools.find(s => s.id === schoolId);
-                    if (sel?.super_username && sel.super_username !== 'None') {
-                      return (
-                        <option value={sel.super_username}>
-                          {sel.super_username} (Assigned Superadmin)
-                        </option>
-                      );
-                    }
-                    return null;
-                  })()}
-                  <option value="admin">admin (Standard Test Account)</option>
-                  <option value="developer">developer (Standard Dev Account)</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="space-y-1">
               <label className="text-[10px] font-bold uppercase tracking-widest text-neutral-400 dark:text-zinc-500 ml-1">SUPERADMIN PASSWORD</label>
               <div className="relative">
                 <input 
@@ -6232,6 +6333,12 @@ Please verify the transaction and activate our portal access standardly. Thank y
           className={`px-4 py-2.5 text-xs font-bold uppercase tracking-wider border-b-2 transition-all cursor-pointer whitespace-nowrap ${activeTab === 'billing' ? 'border-emerald-600 text-emerald-600 font-extrabold' : 'border-transparent text-neutral-400 hover:text-neutral-900 dark:hover:text-zinc-100'}`}
         >
           <CreditCard className="w-3.5 h-3.5 inline mr-1" /> Billing & Subscriptions
+        </button>
+        <button 
+          onClick={() => setActiveTab('profile')}
+          className={`px-4 py-2.5 text-xs font-bold uppercase tracking-wider border-b-2 transition-all cursor-pointer whitespace-nowrap ${activeTab === 'profile' ? 'border-emerald-600 text-emerald-600 font-black' : 'border-transparent text-neutral-400 hover:text-neutral-900 dark:hover:text-zinc-100'}`}
+        >
+          <UserCircle className="w-3.5 h-3.5 inline mr-1" /> Profile Settings
         </button>
       </div>
 
@@ -6696,6 +6803,75 @@ Please verify the transaction and activate our portal access standardly. Thank y
               >
                 <QrCode className="w-4 h-4 animate-pulse" />
                 {paymentSubmitting ? 'PROCESSING...' : 'Verify Payment & Open WhatsApp Link'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'profile' && (
+        <div className="max-w-2xl mx-auto space-y-6 animate-fade-in pb-12">
+          <div className="bg-white dark:bg-zinc-900 border border-black/5 dark:border-white/10 p-6 md:p-8 rounded-3xl space-y-6 shadow-sm">
+            <div className="border-b border-black/5 dark:border-white/10 pb-4">
+              <h3 className="text-sm font-black uppercase tracking-wider flex items-center gap-1.5 dark:text-zinc-100">
+                <UserCircle className="text-emerald-600 w-4 h-4" /> Superadmin Profile & Portal Credentials
+              </h3>
+              <p className="text-[11px] text-neutral-400 dark:text-zinc-500 mt-1">
+                View and customize your master system credentials. Feel free to view or update your login details here.
+              </p>
+            </div>
+
+            <form onSubmit={handleUpdateProfileSettings} className="space-y-4">
+              <div className="space-y-1">
+                <span className="text-[9px] font-bold uppercase tracking-widest text-neutral-400 dark:text-zinc-500 block">REGISTERED INSTITUTION</span>
+                <input 
+                  type="text"
+                  readOnly
+                  disabled
+                  className="w-full px-4 py-2 bg-neutral-100 dark:bg-zinc-800 text-neutral-500 border border-black/5 dark:border-white/10 rounded-xl text-xs font-mono select-all cursor-not-allowed uppercase"
+                  value={schoolObj?.name || ''}
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-[9px] font-bold uppercase tracking-widest text-neutral-400 dark:text-zinc-500">SUPERADMIN USERNAME</label>
+                  <input 
+                    type="text"
+                    required
+                    className="w-full px-4 py-2 bg-neutral-50 dark:bg-zinc-850 text-neutral-900 dark:text-zinc-100 border border-black/5 dark:border-white/10 rounded-xl text-xs focus:ring-1 focus:ring-emerald-500 focus:outline-none focus:bg-white font-mono"
+                    value={profileUsername}
+                    onChange={e => setProfileUsername(e.target.value)}
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[9px] font-bold uppercase tracking-widest text-neutral-400 dark:text-zinc-500">SUPERADMIN PASSWORD</label>
+                  <div className="relative">
+                    <input 
+                      type={showProfilePass ? "text" : "password"}
+                      required
+                      className="w-full pl-4 pr-10 py-2 bg-neutral-50 dark:bg-zinc-850 text-neutral-900 dark:text-zinc-100 border border-black/5 dark:border-white/10 rounded-xl text-xs focus:ring-1 focus:ring-emerald-500 focus:outline-none focus:bg-white font-mono"
+                      value={profilePassword}
+                      onChange={e => setProfilePassword(e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowProfilePass(!showProfilePass)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 dark:hover:text-zinc-300 transition-all cursor-pointer"
+                    >
+                      {showProfilePass ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <button 
+                type="submit"
+                disabled={profileSaving}
+                className="w-full py-2.5 bg-black dark:bg-zinc-100 dark:text-zinc-950 hover:bg-neutral-800 dark:hover:bg-zinc-200 text-white text-xs font-black uppercase tracking-widest rounded-xl transition-all cursor-pointer shadow-sm disabled:opacity-50"
+              >
+                {profileSaving ? 'SAVING CHANGES...' : 'Save Profile Credentials'}
               </button>
             </form>
           </div>

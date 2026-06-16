@@ -5,9 +5,7 @@ import { Server } from 'socket.io';
 import { createServer as createViteServer } from 'vite';
 import Database from 'better-sqlite3';
 import path from 'path';
-import { fileURLToPath } from 'url';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const db = new Database('attendance.db');
 
 // Initialize Database
@@ -878,7 +876,7 @@ async function startServer() {
       const lecturer_password = (db.prepare("SELECT value FROM settings WHERE key = 'lecturer_password'").get() as any)?.value || 'lecturer123';
       
       const superadmins = db.prepare(`
-        SELECT s.username, s.password, sc.name as school_name 
+        SELECT s.school_id, s.username, s.password, sc.name as school_name 
         FROM superadmins s
         JOIN schools sc ON s.school_id = sc.id
       `).all() as any[];
@@ -888,6 +886,7 @@ async function startServer() {
       // superadmins first
       for (const sa of superadmins) {
         results.push({
+          school_id: sa.school_id,
           user_name: sa.username,
           school_name: sa.school_name,
           role: 'Superadmin',
@@ -1052,20 +1051,63 @@ async function startServer() {
   app.post('/api/superadmin/login', (req, res) => {
     const { school_id, username, password } = req.body;
     try {
-      const superadmin = db.prepare(`
-        SELECT s.*, sc.name as school_name, sc.status as school_status, sc.paid_status as school_paid_status 
-        FROM superadmins s
-        JOIN schools sc ON s.school_id = sc.id
-        WHERE s.school_id = ? AND s.username = ? AND s.password = ?
-      `).get(school_id, username, password) as any;
+      let superadmin;
+      if (username) {
+        superadmin = db.prepare(`
+          SELECT s.*, sc.name as school_name, sc.status as school_status, sc.paid_status as school_paid_status 
+          FROM superadmins s
+          JOIN schools sc ON s.school_id = sc.id
+          WHERE s.school_id = ? AND s.username = ? AND s.password = ?
+        `).get(school_id, username, password) as any;
+      } else {
+        // Authenticate superadmin using school_id and password only (username of superadmin is automatically matched)
+        superadmin = db.prepare(`
+          SELECT s.*, sc.name as school_name, sc.status as school_status, sc.paid_status as school_paid_status 
+          FROM superadmins s
+          JOIN schools sc ON s.school_id = sc.id
+          WHERE s.school_id = ? AND s.password = ?
+        `).get(school_id, password) as any;
+      }
       
       const schoolObj = db.prepare('SELECT * FROM schools WHERE id = ?').get(school_id) as any;
       
       if (superadmin && schoolObj) {
         res.json({ success: true, superadmin, school: schoolObj });
       } else {
-        res.status(401).json({ error: 'Invalid username or password mapping to selected school.' });
+        res.status(401).json({ error: 'Invalid password for the selected school.' });
       }
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.put('/api/superadmin/profile', (req, res) => {
+    const { school_id, username, password } = req.body;
+    if (!school_id || !username || !password) {
+      return res.status(400).json({ error: 'Missing required parameters: school_id, username, password' });
+    }
+    try {
+      db.prepare('UPDATE superadmins SET username = ?, password = ? WHERE school_id = ?').run(username, password, school_id);
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post('/api/developer/update-password', (req, res) => {
+    const { role, school_id, password, username } = req.body;
+    try {
+      if (role === 'Superadmin') {
+        if (!school_id) return res.status(400).json({ error: 'School ID required for Superadmin' });
+        db.prepare('UPDATE superadmins SET username = ?, password = ? WHERE school_id = ?').run(username || 'admin', password, school_id);
+      } else if (role === 'Representative') {
+        db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('rep_password', ?)").run(password);
+      } else if (role === 'Lecturer') {
+        db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('lecturer_password', ?)").run(password);
+      } else {
+        return res.status(400).json({ error: 'Invalid user role' });
+      }
+      res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
