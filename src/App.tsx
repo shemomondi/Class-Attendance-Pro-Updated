@@ -4763,6 +4763,17 @@ const DeveloperPanel = () => {
   useEffect(() => {
     if (isAuthenticated) {
       fetchDeveloperData();
+      
+      const socket = io();
+      socket.on('payment-submitted', () => {
+        fetchDeveloperData();
+      });
+      socket.on('attendance-updated', () => {
+        fetchDeveloperData();
+      });
+      return () => {
+        socket.disconnect();
+      };
     }
   }, [isAuthenticated]);
 
@@ -5074,38 +5085,122 @@ const DeveloperPanel = () => {
           <div className="lg:col-span-2 space-y-6">
             <h2 className="text-xs font-black uppercase tracking-wider text-neutral-400 ml-1">Registered Schools & Universities</h2>
             
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {schools.map(school => (
-                <div 
-                  key={school.id}
-                  onClick={() => inspectSchool(school)}
-                  className={`p-5 rounded-2xl border transition-all cursor-pointer relative overflow-hidden group flex flex-col justify-between h-48 bg-white dark:bg-zinc-900 shadow-[0_4px_20px_rgba(0,0,0,0.02)] ${selectedSchool?.id === school.id ? 'border-emerald-600 ring-1 ring-emerald-600/30' : 'border-neutral-200 dark:border-white/10 hover:border-emerald-600/30 dark:hover:border-emerald-500/35 hover:shadow-md'}`}
-                >
-                  <div>
-                    <div className="flex justify-between items-start mb-2">
-                      <span className={`px-2 py-0.5 rounded-full text-[8px] font-bold uppercase font-mono tracking-widest ${school.status === 'active' ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600' : 'bg-red-50 dark:bg-red-950/30 text-red-500'}`}>
-                        ● {school.status}
-                      </span>
-                      <span className={`px-2 py-0.5 rounded-full text-[8px] font-bold uppercase font-mono tracking-widest ${school.paid_status === 'paid' ? 'bg-emerald-600 text-white' : 'bg-amber-600 text-white animate-pulse'}`}>
-                        {school.paid_status}
-                      </span>
-                    </div>
-                    
-                    <h3 className="font-extrabold text-base tracking-tight truncate dark:text-zinc-100 uppercase group-hover:text-emerald-600 transition-colors">{school.name}</h3>
-                    <p className="text-[10px] text-neutral-400 font-mono mt-1">Superadmin: <span className="font-bold text-neutral-600 dark:text-zinc-300">{school.super_username}</span></p>
-                  </div>
-
-                  <div className="border-t border-black/5 dark:border-white/10 pt-3 flex items-center justify-between mt-4">
-                    <div>
-                      <span className="text-[9px] text-neutral-400 block uppercase tracking-widest font-mono">Monthly Bill</span>
-                      <span className="text-sm font-black text-neutral-800 dark:text-zinc-200">KES {school.billing_amount}/mo</span>
-                    </div>
-                    <span className="text-[9px] text-emerald-600 font-bold uppercase tracking-widest flex items-center gap-1">
-                      Inspect Details <ChevronDown className="w-3.5 h-3.5 rotate-270" />
-                    </span>
-                  </div>
+            {/* Real-time Payment approvals alerts notifications board */}
+            {paymentSubmissions.filter(p => p.status === 'pending').length > 0 && (
+              <div className="space-y-3 bg-amber-500/10 dark:bg-amber-950/20 border border-amber-600/30 p-5 rounded-2xl animate-pulse">
+                <div className="flex items-center gap-2 text-amber-800 dark:text-amber-400">
+                  <span className="w-2 h-2 bg-amber-500 rounded-full animate-ping" />
+                  <h3 className="text-xs font-black uppercase tracking-widest font-mono">Real-Time Notice: Payment Submissions to Till Number 3439291</h3>
                 </div>
-              ))}
+                <div className="space-y-3 mt-2">
+                  {paymentSubmissions.filter(p => p.status === 'pending').map(sub => (
+                    <div key={sub.id} className="bg-white dark:bg-zinc-900 border border-black/5 dark:border-white/10 p-4 rounded-xl flex flex-col md:flex-row justify-between items-start md:items-center gap-3 shadow-md">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-xs font-black uppercase text-neutral-900 dark:text-zinc-150">{sub.school_name || 'Anonymous School'}</span>
+                          <span className="px-2 py-0.5 bg-amber-500 text-white rounded font-mono font-bold text-[8.5px]">PENDING VERIFICATION</span>
+                        </div>
+                        <p className="text-[11px] text-neutral-500 dark:text-zinc-400 leading-relaxed font-sans">
+                          M-Pesa Ref: <strong className="font-mono text-neutral-900 dark:text-zinc-300 uppercase">{sub.reference}</strong> • Amount: <strong className="font-mono text-neutral-900 dark:text-zinc-300">KES {sub.amount}</strong> • Phone: <strong className="font-mono text-neutral-900 dark:text-zinc-300">{sub.phone}</strong> • Sender: <strong className="font-sans font-bold text-neutral-900 dark:text-zinc-300">{sub.sender_name}</strong>
+                        </p>
+                      </div>
+                      <div className="flex gap-2 shrink-0">
+                        <button
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            try {
+                              const res = await fetch('/api/developer/payment-submissions/approve', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ id: sub.id, school_id: sub.school_id })
+                              });
+                              if (res.ok) {
+                                fetchDeveloperData();
+                                alert(`School subscription approved & activation finalized! Notifications dispatched in real-time.`);
+                              }
+                            } catch (err) {
+                              console.error(err);
+                            }
+                          }}
+                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-black uppercase tracking-wider rounded-lg shadow-sm cursor-pointer"
+                        >
+                          Approve Open Portal
+                        </button>
+                        <button
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            if (!confirm('Reject this payment submission?')) return;
+                            try {
+                              const res = await fetch('/api/developer/payment-submissions/reject', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ id: sub.id, school_id: sub.school_id })
+                              });
+                              if (res.ok) {
+                                fetchDeveloperData();
+                                alert('Payment verification rejected. Status updated instantly.');
+                              }
+                            } catch (err) {
+                              console.error(err);
+                            }
+                          }}
+                          className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-black uppercase tracking-wider rounded-lg shadow-sm cursor-pointer"
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Registered schools list in unified table form structure */}
+            <div className="bg-white dark:bg-zinc-900 border border-black/5 dark:border-white/10 rounded-2xl overflow-hidden shadow-sm">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-neutral-50 dark:bg-zinc-800/10 uppercase tracking-widest font-mono text-[9px] text-neutral-400 font-bold border-b border-black/5 dark:border-white/10">
+                      <th className="py-3 px-4">School Name</th>
+                      <th className="py-3 px-4">Portal Credentials</th>
+                      <th className="py-3 px-4">Portal Status</th>
+                      <th className="py-3 px-4">Billing Status</th>
+                      <th className="py-3 px-4">Monthly Fee</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-black/5 dark:divide-white/10 font-sans">
+                    {schools.map(school => (
+                      <tr 
+                        key={school.id}
+                        onClick={() => inspectSchool(school)}
+                        className={`hover:bg-neutral-50/70 dark:hover:bg-zinc-800/20 cursor-pointer transition-colors ${selectedSchool?.id === school.id ? 'bg-emerald-50/50 dark:bg-emerald-950/15' : ''}`}
+                      >
+                        <td className="py-3.5 px-4">
+                          <span className="font-black text-neutral-900 dark:text-zinc-100 uppercase block">{school.name}</span>
+                          <span className="text-[10px] text-neutral-400 font-mono">ID: #{school.id}</span>
+                        </td>
+                        <td className="py-3.5 px-4 font-mono text-[11px] text-neutral-600 dark:text-zinc-400 select-all">
+                          <div>User: <span className="font-bold text-neutral-900 dark:text-zinc-150">{school.super_username}</span></div>
+                          <div className="text-neutral-400 dark:text-zinc-500">Pass: <span className="font-bold">{school.super_password || '********'}</span></div>
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <span className={`px-2 py-0.5 rounded-full text-[8.5px] font-bold uppercase font-mono tracking-widest whitespace-nowrap inline-block ${school.status === 'active' ? 'bg-emerald-50 dark:bg-emerald-950/20 text-emerald-600' : 'bg-red-50 dark:bg-red-950/20 text-red-500'}`}>
+                            ● {school.status}
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase font-mono tracking-wider whitespace-nowrap inline-block ${school.paid_status === 'paid' ? 'bg-emerald-600 text-white shadow-xs' : school.paid_status === 'pending_activation' ? 'bg-amber-500 text-white animate-pulse' : 'bg-rose-600 text-white'}`}>
+                            {school.paid_status}
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-4 font-black font-mono text-neutral-900 dark:text-zinc-150 whitespace-nowrap text-right pr-4">
+                          KES {school.billing_amount}/mo
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
 
             {/* School Details Inspector Drawer/Modal */}
@@ -5584,7 +5679,7 @@ const SuperadminPortal = () => {
   const [recentLessons, setRecentLessons] = useState<any[]>([]);
   const [passwordsList, setPasswordsList] = useState<any[]>([]);
   const [schoolObj, setSchoolObj] = useState<any | null>(null);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'passwords' | 'ai' | 'announcements'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'passwords' | 'ai' | 'announcements' | 'billing'>('dashboard');
 
   // AI Chat States
   const [aiChat, setAiChat] = useState<{ sender: 'user' | 'bot', text: string }[]>([]);
@@ -5744,6 +5839,14 @@ const SuperadminPortal = () => {
   useEffect(() => {
     if (isAuthenticated) {
       fetchSuperAdminViewDetails();
+      
+      const socket = io();
+      socket.on('attendance-updated', () => {
+        fetchSuperAdminViewDetails();
+      });
+      return () => {
+        socket.disconnect();
+      };
     }
   }, [isAuthenticated, schoolId]);
 
@@ -6124,6 +6227,12 @@ Please verify the transaction and activate our portal access standardly. Thank y
         >
           <Terminal className="w-3.5 h-3.5 inline mr-1" /> Academics AI Bot assistant
         </button>
+        <button 
+          onClick={() => setActiveTab('billing')}
+          className={`px-4 py-2.5 text-xs font-bold uppercase tracking-wider border-b-2 transition-all cursor-pointer whitespace-nowrap ${activeTab === 'billing' ? 'border-emerald-600 text-emerald-600 font-extrabold' : 'border-transparent text-neutral-400 hover:text-neutral-900 dark:hover:text-zinc-100'}`}
+        >
+          <CreditCard className="w-3.5 h-3.5 inline mr-1" /> Billing & Subscriptions
+        </button>
       </div>
 
       {activeTab === 'dashboard' && (
@@ -6426,6 +6535,169 @@ Please verify the transaction and activate our portal access standardly. Thank y
                 </button>
               ))}
             </div>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'billing' && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          {/* Guidelines details */}
+          <div className="bg-gradient-to-br from-emerald-600 to-emerald-700 text-white p-8 rounded-3xl space-y-6 shadow-md border border-emerald-800">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] uppercase tracking-widest font-black bg-white/20 px-3 py-1 rounded-full">Lipa Na M-Pesa</span>
+              <span className="text-[10px] uppercase font-bold text-emerald-100 italic font-mono">Official Guidelines</span>
+            </div>
+            
+            <div className="space-y-2">
+              <span className="text-[10px] text-emerald-100 block font-mono">STEP-BY-STEP PAYMENT PROCEDURE</span>
+              <h2 className="text-2xl font-black uppercase tracking-tight leading-tight">Pay to Till Number 3439291</h2>
+              <p className="text-xs text-emerald-50/90 leading-relaxed font-sans">
+                Follow these simple steps on your mobile phone to complete the subscription renewal and keep your university attendance tracking portals fully active.
+              </p>
+            </div>
+
+            <div className="space-y-3.5 text-xs font-sans">
+              <div className="flex gap-3 items-start">
+                <span className="w-5 h-5 flex items-center justify-center rounded-full bg-white/20 font-black text-[10px] shrink-0 mt-0.5 font-mono">1</span>
+                <div>
+                  <h4 className="font-bold uppercase tracking-wide">Access M-Pesa client</h4>
+                  <p className="text-emerald-100/90 text-[11px] mt-0.5">Open your Safaricom SIM Toolkit or M-Pesa application on your phone.</p>
+                </div>
+              </div>
+              
+              <div className="flex gap-3 items-start">
+                <span className="w-5 h-5 flex items-center justify-center rounded-full bg-white/20 font-black text-[10px] shrink-0 mt-0.5 font-mono">2</span>
+                <div>
+                  <h4 className="font-bold uppercase tracking-wide font-sans">Lipa Na M-Pesa Menu</h4>
+                  <p className="text-emerald-100/90 text-[11px] mt-0.5">Select the <strong>Lipa Na M-Pesa</strong> option, then choose the <strong>Buy Goods and Services</strong> option.</p>
+                </div>
+              </div>
+
+              <div className="flex gap-3 items-start">
+                <span className="w-5 h-5 flex items-center justify-center rounded-full bg-white/20 font-black text-[10px] shrink-0 mt-0.5 font-mono">3</span>
+                <div>
+                  <h4 className="font-bold uppercase tracking-wide font-sans">Enter Till Number</h4>
+                  <p className="text-emerald-100/90 text-[11px] mt-0.5">
+                    Input Till Number: <strong className="font-mono text-white bg-black/20 px-1.5 py-0.5 rounded ml-0.5 select-all">3439291</strong>
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex gap-3 items-start">
+                <span className="w-5 h-5 flex items-center justify-center rounded-full bg-white/20 font-black text-[10px] shrink-0 mt-0.5 font-mono">4</span>
+                <div>
+                  <h4 className="font-bold uppercase tracking-wide font-sans">Enter Invoice Amount</h4>
+                  <p className="text-emerald-100/90 text-[11px] mt-0.5">
+                    Specify: <strong>KES {schoolObj?.billing_amount || '1,500'}</strong> (standard monthly license invoice).
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex gap-3 items-start">
+                <span className="w-5 h-5 flex items-center justify-center rounded-full bg-white/20 font-black text-[10px] shrink-0 mt-0.5 font-mono">5</span>
+                <div>
+                  <h4 className="font-bold uppercase tracking-wide font-sans">Merchant & Pin Verification</h4>
+                  <p className="text-emerald-100/90 text-[11px] mt-0.5">
+                    Verify the destination merchant displays as <strong className="text-white">Shem Omondi</strong>, then complete the transaction with your standard M-Pesa Pin code.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex gap-3 items-start">
+                <span className="w-5 h-5 flex items-center justify-center rounded-full bg-white/20 font-black text-[10px] shrink-0 mt-0.5 font-mono">6</span>
+                <div>
+                  <h4 className="font-bold uppercase tracking-wide font-sans">Log Confirmation Reference</h4>
+                  <p className="text-emerald-100/90 text-[11px] mt-0.5">
+                    Copy the unique 10-character code (e.g. QRT5XZ67SP) and paste it in the Verification Form on the right. Standard activations run in less than 15 minutes!
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="h-px bg-white/10 my-4" />
+
+            <div className="flex flex-col sm:flex-row justify-between text-xs text-emerald-100 gap-2 font-mono uppercase">
+              <div>
+                <span className="block text-[10px] opacity-75 font-sans uppercase">Subscription status</span>
+                <span className="font-bold text-white uppercase mt-0.5 block font-sans">
+                  {schoolObj?.paid_status === 'paid' ? 'Active Account (Paid)' : schoolObj?.paid_status === 'pending_activation' ? 'Verification Awaiting (Pending)' : 'Unpaid (Quota Inactive)'}
+                </span>
+              </div>
+              <div>
+                <span className="block text-[10px] opacity-75 font-sans uppercase">Configured Billing</span>
+                <span className="font-bold text-white mt-0.5 block">KES {schoolObj?.billing_amount || '1,500'}/month</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Verification input card */}
+          <div className="bg-white dark:bg-zinc-900 border border-black/5 dark:border-white/10 p-6 md:p-8 rounded-3xl space-y-6 shadow-sm">
+            <div className="border-b border-black/5 dark:border-white/10 pb-4">
+              <h3 className="text-sm font-black uppercase tracking-wider flex items-center gap-1.5 dark:text-zinc-100">
+                <CreditCard className="text-emerald-600" /> Subscription Renewal Verification Form
+              </h3>
+              <p className="text-[11px] text-neutral-400 dark:text-zinc-500 mt-1">If you have paid via Till 3439291, enter verification details to instantly submit to developer.</p>
+            </div>
+
+            <form onSubmit={handleSimulatePayment} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-[9px] font-bold uppercase tracking-widest text-neutral-400 dark:text-zinc-500">M-PESA REF NUMBER</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. QRT5XZ67SP"
+                    className="w-full px-3 py-2 bg-neutral-50 dark:bg-zinc-850 text-neutral-900 dark:text-zinc-100 border border-black/5 dark:border-white/10 rounded-xl text-xs font-mono uppercase focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    value={paymentRef}
+                    onChange={e => setPaymentRef(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[9px] font-bold uppercase tracking-widest text-neutral-400 dark:text-zinc-500">PAID AMOUNT (KES)</label>
+                  <input
+                    type="number"
+                    required
+                    className="w-full px-3 py-2 bg-neutral-50 dark:bg-zinc-850 text-neutral-900 dark:text-zinc-100 border border-black/5 dark:border-white/10 rounded-xl text-xs font-mono focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    value={paymentAmount}
+                    onChange={e => setPaymentAmount(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-[9px] font-bold uppercase tracking-widest text-neutral-400 dark:text-zinc-400">SENDER PHONE NUMBER</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. 0712345678"
+                    className="w-full px-3 py-2 bg-neutral-50 dark:bg-zinc-850 text-neutral-900 dark:text-zinc-100 border border-black/5 dark:border-white/10 rounded-xl text-xs font-mono focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    value={paymentPhone}
+                    onChange={e => setPaymentPhone(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[9px] font-bold uppercase tracking-widest text-neutral-400 dark:text-zinc-400">SENDER NAME / ALIAS</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. John Doe"
+                    className="w-full px-3 py-2 bg-neutral-50 dark:bg-zinc-850 text-neutral-900 dark:text-zinc-100 border border-black/5 dark:border-white/10 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    value={paymentName}
+                    onChange={e => setPaymentName(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={paymentSubmitting}
+                className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2 transition-all cursor-pointer shadow-sm disabled:opacity-50"
+              >
+                <QrCode className="w-4 h-4 animate-pulse" />
+                {paymentSubmitting ? 'PROCESSING...' : 'Verify Payment & Open WhatsApp Link'}
+              </button>
+            </form>
           </div>
         </div>
       )}

@@ -244,6 +244,7 @@ interface LessonRow {
   otp_enabled: number; 
   unit_name?: string; 
   lecturer?: string; 
+  school_id?: number;
 }
 interface AttendanceRow { id: number; lesson_id: number; student_id: number; otp: string; status: string; marked_at: string; student_name?: string; admission_number?: string; }
 
@@ -983,6 +984,7 @@ async function startServer() {
         db.prepare("UPDATE schools SET status = 'active', paid_status = 'paid', last_billing_date = ? WHERE id = ?")
           .run(new Date().toISOString().split('T')[0], school_id);
       })();
+      io.emit('attendance-updated');
       res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -998,6 +1000,7 @@ async function startServer() {
           db.prepare("UPDATE schools SET paid_status = 'unpaid' WHERE id = ?").run(school_id);
         }
       })();
+      io.emit('attendance-updated');
       res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -1105,6 +1108,9 @@ async function startServer() {
       `).run(school_id, schoolName, reference || 'N/A', amount || 1500, phone || 'N/A', sender_name || 'N/A', new Date().toISOString());
 
       db.prepare("UPDATE schools SET paid_status = 'pending_activation' WHERE id = ?").run(school_id);
+      
+      io.emit('payment-submitted', { school_id });
+      io.emit('attendance-updated');
       res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -1124,6 +1130,9 @@ async function startServer() {
       `).run(schoolId, schoolName, reference || 'N/A', amount || 1500, phone || 'N/A', sender_name || 'N/A', new Date().toISOString());
 
       db.prepare("UPDATE schools SET paid_status = 'pending_activation' WHERE id = ?").run(schoolId);
+      
+      io.emit('payment-submitted', { school_id: schoolId });
+      io.emit('attendance-updated');
       res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -1563,6 +1572,15 @@ Return the structured relationship cleanly in the requested JSON structure. Keep
       }
 
       const unitIdNum = parseInt(unit_id);
+      
+      // Verification of subscription status
+      const unit = db.prepare('SELECT school_id FROM units WHERE id = ?').get(unitIdNum) as { school_id: number } | undefined;
+      const schoolId = unit ? (unit.school_id || 1) : 1;
+      const school = db.prepare('SELECT status, paid_status FROM schools WHERE id = ?').get(schoolId) as { status: string; paid_status: string } | undefined;
+      if (school && (school.status === 'paused' || school.paid_status === 'unpaid' || school.paid_status === 'suspended')) {
+        return res.status(403).json({ error: 'System Access Suspended. Your school subscription is unpaid or lock-disabled. Please contact the administrator to renew.' });
+      }
+
       const now = new Date();
       const start_time = now.toISOString();
       const durationNum = parseInt(duration) || 60;
@@ -1674,13 +1692,14 @@ Return the structured relationship cleanly in the requested JSON structure. Keep
 
       console.log('Active lesson found:', lesson.unit_name);
 
-      // Auto-expire pending records if dynamic duration passed
-      const otp_duration_mins = parseInt((db.prepare("SELECT value FROM settings WHERE key = 'otp_duration_mins'").get() as any)?.value || '20');
+      // Auto-expire pending records into 'absent' status only after late threshold time ends
+      const late_threshold_mins = parseInt((db.prepare("SELECT value FROM settings WHERE key = 'late_threshold_mins'").get() as any)?.value || '20');
+      const otp_duration_mins = parseInt((db.prepare("SELECT value FROM settings WHERE key = 'otp_duration_mins'").get() as any)?.value || '10');
       const diffMins = (now - startTime) / (1000 * 60);
-      if (diffMins > otp_duration_mins) {
+      if (diffMins > late_threshold_mins) {
         const result = db.prepare("UPDATE attendance SET status = 'absent' WHERE lesson_id = ? AND status = 'pending'").run(lesson.id);
         if (result.changes > 0) {
-          console.log(`Auto-expired ${result.changes} pending attendance records.`);
+          console.log(`Auto-expired ${result.changes} pending attendance records to absent status.`);
         }
       }
 
@@ -1701,19 +1720,28 @@ Return the structured relationship cleanly in the requested JSON structure. Keep
   app.post('/api/attendance/mark', (req, res) => {
     const { lesson_id, student_id, otp } = req.body;
     
-    const lesson = db.prepare('SELECT start_time, otp_enabled FROM lessons WHERE id = ?').get(lesson_id) as LessonRow | undefined;
+    const lesson = db.prepare('SELECT start_time, otp_enabled, school_id FROM lessons WHERE id = ?').get(lesson_id) as LessonRow | undefined;
     if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
+    
+    // Verify subscription status
+    const schoolId = lesson.school_id || 1;
+    const school = db.prepare('SELECT status, paid_status FROM schools WHERE id = ?').get(schoolId) as { status: string; paid_status: string } | undefined;
+    if (school && (school.status === 'paused' || school.paid_status === 'unpaid' || school.paid_status === 'suspended')) {
+      return res.status(403).json({ error: 'System Access Suspended. Your school subscription is unpaid or lock-disabled. Please contact the administrator to renew.' });
+    }
     
     if (!lesson.otp_enabled) return res.status(400).json({ error: 'OTP input is not yet enabled by the representative' });
 
     const startTime = new Date(lesson.start_time).getTime();
     const now = new Date().getTime();
-    const otp_duration_mins = parseInt((db.prepare("SELECT value FROM settings WHERE key = 'otp_duration_mins'").get() as any)?.value || '20');
+    const otp_duration_mins = parseInt((db.prepare("SELECT value FROM settings WHERE key = 'otp_duration_mins'").get() as any)?.value || '10');
+    const late_threshold_mins = parseInt((db.prepare("SELECT value FROM settings WHERE key = 'late_threshold_mins'").get() as any)?.value || '20');
     const diffMins = (now - startTime) / (1000 * 60);
 
-    if (diffMins > otp_duration_mins) {
-      db.prepare("UPDATE attendance SET status = 'absent' WHERE lesson_id = ? AND student_id = ? AND status = 'pending'").run(lesson_id, student_id);
-      return res.status(400).json({ error: `OTP has expired (${otp_duration_mins} minutes elapsed)` });
+    // If late threshold timer has completely elapsed, mark all pending as absent automatically
+    if (diffMins > late_threshold_mins) {
+      db.prepare("UPDATE attendance SET status = 'absent' WHERE lesson_id = ? AND status = 'pending'").run(lesson_id);
+      return res.status(400).json({ error: `OTP has expired totally. The late registration threshold time (${late_threshold_mins} minutes) has elapsed and you have been marked absent.` });
     }
 
     const record = db.prepare('SELECT * FROM attendance WHERE lesson_id = ? AND student_id = ? AND otp = ?').get(lesson_id, student_id, String(otp)) as AttendanceRow | undefined;
@@ -1723,8 +1751,8 @@ Return the structured relationship cleanly in the requested JSON structure. Keep
       return res.status(400).json({ error: `Already marked ${record.status}` });
     }
 
-    const late_threshold_mins = parseInt((db.prepare("SELECT value FROM settings WHERE key = 'late_threshold_mins'").get() as any)?.value || '10');
-    const markStatus = diffMins > late_threshold_mins ? 'late' : 'present';
+    // Marked after OTP duration but before the late threshold time will be marked 'late'
+    const markStatus = diffMins > otp_duration_mins ? 'late' : 'present';
 
     db.prepare("UPDATE attendance SET status = ?, marked_at = ? WHERE id = ?")
       .run(markStatus, new Date().toISOString(), record.id);
@@ -2055,8 +2083,9 @@ Return the structured relationship cleanly in the requested JSON structure. Keep
     });
     app.use(vite.middlewares);
   } else {
-    app.use(express.static(path.join(__dirname, 'dist')));
-    app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'dist/index.html')));
+    const distPath = path.join(process.cwd(), 'dist');
+    app.use(express.static(distPath));
+    app.get('*', (req, res) => res.sendFile(path.join(distPath, 'index.html')));
   }
 
   const PORT = 3000;
